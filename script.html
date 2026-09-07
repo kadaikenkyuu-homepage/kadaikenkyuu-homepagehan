@@ -1,0 +1,961 @@
+```html
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>DEATH MAZE</title>
+
+<style>
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  overflow:hidden;
+  background:#000;
+  font-family:sans-serif;
+  cursor:none;
+}
+
+canvas{display:block}
+
+/* メニュー */
+#menu{
+  position:fixed;
+  inset:0;
+  z-index:10;
+  background:rgba(0,0,0,.94);
+  color:white;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  text-align:center;
+}
+
+#menu h1{
+  color:red;
+  font-size:70px;
+  letter-spacing:5px;
+}
+
+#menu p{
+  font-size:20px;
+  line-height:1.8;
+}
+
+button{
+  margin-top:25px;
+  padding:14px 45px;
+  border:0;
+  border-radius:10px;
+  background:red;
+  color:white;
+  font-size:24px;
+  cursor:pointer;
+}
+
+/* メッセージ */
+#info{
+  position:fixed;
+  top:20px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:5;
+  padding:10px 20px;
+  border-radius:10px;
+  background:rgba(0,0,0,.6);
+  color:white;
+  font-size:20px;
+}
+
+/* ミニマップ */
+#minimap{
+  position:fixed;
+  top:20px;
+  right:20px;
+  width:220px;
+  height:140px;
+  z-index:6;
+  background:#111;
+  border:3px solid #777;
+}
+
+/* ロッカー内 */
+#hiddenScreen{
+  position:fixed;
+  inset:0;
+  z-index:4;
+  display:none;
+  justify-content:center;
+  align-items:center;
+  text-align:center;
+  background:#050505;
+  color:#777;
+}
+
+#hiddenScreen h2{
+  letter-spacing:5px;
+}
+
+#hiddenScreen p{
+  color:#555;
+}
+</style>
+</head>
+
+<body>
+
+<div id="menu">
+  <h1>DEATH MAZE</h1>
+
+  <p>
+    マウス：視点操作<br>
+    WASD：移動<br>
+    E：ロッカーに隠れる / 出る
+    <br><br>
+    奴から逃げて出口へ辿り着け。
+  </p>
+
+  <button id="startBtn">START</button>
+</div>
+
+<div id="info"></div>
+
+<canvas id="minimap"></canvas>
+
+<div id="hiddenScreen">
+  <div>
+    <h2>隠れている……</h2>
+    <p>Eキー：外に出る</p>
+  </div>
+</div>
+
+<canvas id="game"></canvas>
+
+
+<script>
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const minimap = document.getElementById("minimap");
+const mctx = minimap.getContext("2d");
+
+const menu = document.getElementById("menu");
+const info = document.getElementById("info");
+const hiddenScreen = document.getElementById("hiddenScreen");
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+const TILE = 100;
+
+/*
+  # = 壁
+  S = スタート
+  E = 出口
+  L = ロッカー
+*/
+
+const map = [
+  "################",
+  "#S       #    E#",
+  "# ###### # #####",
+  "#      # #     #",
+  "###### # ##### #",
+  "#      #       #",
+  "# #### #########",
+  "#        L     #",
+  "################"
+];
+
+
+/* プレイヤー・敵 */
+
+const startPlayer = {
+  x:TILE * 1.5,
+  y:TILE * 1.5,
+  angle:0
+};
+
+const startEnemy = {
+  x:TILE * 13.5,
+  y:TILE * 7.5
+};
+
+let player;
+let enemy;
+
+let keys = {};
+let playing = false;
+let hidden = false;
+
+
+/* =========================
+   初期化
+========================= */
+
+function resetGame(){
+
+  player = {
+    ...startPlayer
+  };
+
+  enemy = {
+    ...startEnemy,
+    speed:1.2
+  };
+
+  hidden = false;
+
+  hiddenScreen.style.display = "none";
+}
+
+
+/* =========================
+   メッセージ
+========================= */
+
+function showMessage(text){
+
+  info.textContent = text;
+
+  clearTimeout(info.timer);
+
+  info.timer = setTimeout(()=>{
+    info.textContent = "";
+  },2000);
+}
+
+
+/* =========================
+   ゲーム開始
+========================= */
+
+function startGame(){
+
+  resetGame();
+
+  menu.style.display = "none";
+  playing = true;
+
+  canvas.requestPointerLock();
+
+  showMessage("逃げろ……");
+}
+
+document.getElementById("startBtn").onclick = startGame;
+
+
+/* =========================
+   マウス操作
+========================= */
+
+document.addEventListener("mousemove",e=>{
+
+  if(document.pointerLockElement === canvas && !hidden){
+    player.angle += e.movementX * 0.0025;
+  }
+
+});
+
+
+/* =========================
+   キーボード
+========================= */
+
+addEventListener("keydown",e=>{
+
+  const key = e.key.toLowerCase();
+
+  keys[key] = true;
+
+  if(key === "e" && playing){
+    toggleLocker();
+  }
+
+});
+
+addEventListener("keyup",e=>{
+  keys[e.key.toLowerCase()] = false;
+});
+
+
+/* =========================
+   壁判定
+========================= */
+
+function isWall(x,y){
+
+  const gx = Math.floor(x/TILE);
+  const gy = Math.floor(y/TILE);
+
+  if(!map[gy] || map[gy][gx] === undefined){
+    return true;
+  }
+
+  return map[gy][gx] === "#";
+}
+
+
+/* =========================
+   ロッカーとの距離
+========================= */
+
+function lockerDistance(){
+
+  let min = Infinity;
+
+  map.forEach((row,y)=>{
+    [...row].forEach((cell,x)=>{
+
+      if(cell === "L"){
+
+        const lx = x*TILE + TILE/2;
+        const ly = y*TILE + TILE/2;
+
+        min = Math.min(
+          min,
+          Math.hypot(
+            player.x-lx,
+            player.y-ly
+          )
+        );
+
+      }
+
+    });
+  });
+
+  return min;
+}
+
+
+/* =========================
+   ロッカー
+========================= */
+
+function toggleLocker(){
+
+  /* 隠れている → 出る */
+
+  if(hidden){
+
+    hidden = false;
+
+    hiddenScreen.style.display = "none";
+    canvas.style.display = "block";
+
+    document.body.style.cursor = "none";
+
+    canvas.requestPointerLock();
+
+    showMessage("ロッカーから出た");
+
+    return;
+  }
+
+
+  /* ロッカーに入る */
+
+  if(lockerDistance() < 80){
+
+    hidden = true;
+
+    hiddenScreen.style.display = "flex";
+
+    /*
+      ゲーム画面は隠す
+    */
+
+    canvas.style.display = "none";
+
+    /*
+      ミニマップは消さない
+    */
+
+    document.exitPointerLock();
+
+    document.body.style.cursor = "default";
+
+    showMessage("ロッカーに隠れた");
+  }
+
+}
+
+
+/* =========================
+   プレイヤー移動
+========================= */
+
+function movePlayer(){
+
+  if(hidden) return;
+
+  const speed = 3;
+
+  let dx = 0;
+  let dy = 0;
+
+  if(keys["w"]){
+    dx += Math.cos(player.angle);
+    dy += Math.sin(player.angle);
+  }
+
+  if(keys["s"]){
+    dx -= Math.cos(player.angle);
+    dy -= Math.sin(player.angle);
+  }
+
+  if(keys["a"]){
+    dx += Math.cos(player.angle-Math.PI/2);
+    dy += Math.sin(player.angle-Math.PI/2);
+  }
+
+  if(keys["d"]){
+    dx += Math.cos(player.angle+Math.PI/2);
+    dy += Math.sin(player.angle+Math.PI/2);
+  }
+
+  const nx = player.x + dx*speed;
+  const ny = player.y + dy*speed;
+
+  if(!isWall(nx,player.y)){
+    player.x = nx;
+  }
+
+  if(!isWall(player.x,ny)){
+    player.y = ny;
+  }
+
+  checkGoal();
+}
+
+
+/* =========================
+   敵
+========================= */
+
+function moveEnemy(){
+
+  /*
+    隠れていても敵は動く
+  */
+
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+
+  const dist = Math.hypot(dx,dy);
+
+  if(dist === 0) return;
+
+  const nx =
+    enemy.x + dx/dist * enemy.speed;
+
+  const ny =
+    enemy.y + dy/dist * enemy.speed;
+
+  if(!isWall(nx,enemy.y)){
+    enemy.x = nx;
+  }
+
+  if(!isWall(enemy.x,ny)){
+    enemy.y = ny;
+  }
+
+  /*
+    隠れている間は
+    捕まらない
+  */
+
+  if(!hidden && dist < 22){
+    gameOver();
+  }
+}
+
+
+/* =========================
+   出口
+========================= */
+
+function checkGoal(){
+
+  const x = Math.floor(player.x/TILE);
+  const y = Math.floor(player.y/TILE);
+
+  if(map[y][x] === "E"){
+    finishGame();
+  }
+}
+
+
+/* =========================
+   3D画面
+========================= */
+
+function drawWorld(){
+
+  /* 空 */
+  ctx.fillStyle = "#87ceeb";
+  ctx.fillRect(
+    0,0,
+    canvas.width,
+    canvas.height/2
+  );
+
+  /* 地面 */
+  ctx.fillStyle = "#444";
+  ctx.fillRect(
+    0,
+    canvas.height/2,
+    canvas.width,
+    canvas.height/2
+  );
+
+
+  for(let i=0;i<canvas.width;i++){
+
+    const rayAngle =
+      player.angle -
+      0.55 +
+      i/canvas.width*1.1;
+
+    let dist = 0;
+
+    while(dist < 2000){
+
+      dist += 2;
+
+      const rx =
+        player.x +
+        Math.cos(rayAngle)*dist;
+
+      const ry =
+        player.y +
+        Math.sin(rayAngle)*dist;
+
+      if(isWall(rx,ry)) break;
+    }
+
+
+    const corrected =
+      dist *
+      Math.cos(rayAngle-player.angle);
+
+    const wallHeight =
+      24000/corrected;
+
+    const shade =
+      Math.max(40,255-corrected/4);
+
+    ctx.fillStyle =
+      `rgb(${shade},${shade},${shade})`;
+
+    ctx.fillRect(
+      i,
+      canvas.height/2-wallHeight/2,
+      1,
+      wallHeight
+    );
+  }
+}
+
+
+/* =========================
+   敵を描画
+========================= */
+
+function drawEnemy(){
+
+  if(hidden) return;
+
+  const dx = enemy.x-player.x;
+  const dy = enemy.y-player.y;
+
+  const dist = Math.hypot(dx,dy);
+
+  const angle = Math.atan2(dy,dx);
+
+  let relative = angle-player.angle;
+
+  while(relative < -Math.PI){
+    relative += Math.PI*2;
+  }
+
+  while(relative > Math.PI){
+    relative -= Math.PI*2;
+  }
+
+  if(Math.abs(relative) > 0.6) return;
+
+
+  const screenX =
+    (relative+0.6)/1.2*
+    canvas.width;
+
+  const size =
+    9000/dist;
+
+  const y =
+    canvas.height/2-size/2;
+
+
+  /* 影 */
+
+  ctx.fillStyle = "rgba(0,0,0,.4)";
+
+  ctx.beginPath();
+
+  ctx.ellipse(
+    screenX,
+    y+size*.95,
+    size*.28,
+    size*.1,
+    0,0,Math.PI*2
+  );
+
+  ctx.fill();
+
+
+  /* 体 */
+
+  ctx.fillStyle = "#111";
+
+  ctx.fillRect(
+    screenX-size*.22,
+    y+size*.2,
+    size*.44,
+    size*.45
+  );
+
+
+  /* 足 */
+
+  ctx.fillRect(
+    screenX-size*.15,
+    y+size*.55,
+    size*.1,
+    size*.35
+  );
+
+  ctx.fillRect(
+    screenX+size*.05,
+    y+size*.55,
+    size*.1,
+    size*.35
+  );
+
+
+  /* 腕 */
+
+  ctx.fillRect(
+    screenX-size*.33,
+    y+size*.23,
+    size*.1,
+    size*.32
+  );
+
+  ctx.fillRect(
+    screenX+size*.23,
+    y+size*.23,
+    size*.1,
+    size*.32
+  );
+
+
+  /* 頭 */
+
+  ctx.fillStyle = "#ddd";
+
+  ctx.beginPath();
+
+  ctx.arc(
+    screenX,
+    y+size*.08,
+    size*.16,
+    0,Math.PI*2
+  );
+
+  ctx.fill();
+
+
+  /* 目 */
+
+  ctx.fillStyle = "red";
+
+  ctx.beginPath();
+
+  ctx.arc(
+    screenX-size*.05,
+    y+size*.06,
+    size*.02,
+    0,Math.PI*2
+  );
+
+  ctx.arc(
+    screenX+size*.05,
+    y+size*.06,
+    size*.02,
+    0,Math.PI*2
+  );
+
+  ctx.fill();
+}
+
+
+/* =========================
+   ミニマップ
+========================= */
+
+function drawMinimap(){
+
+  const w = map[0].length;
+  const h = map.length;
+
+  const cw = minimap.width/w;
+  const ch = minimap.height/h;
+
+
+  /* 背景 */
+
+  mctx.fillStyle = "#111";
+
+  mctx.fillRect(
+    0,0,
+    minimap.width,
+    minimap.height
+  );
+
+
+  /* マップ */
+
+  map.forEach((row,y)=>{
+
+    [...row].forEach((cell,x)=>{
+
+      if(cell === "#"){
+        mctx.fillStyle = "#555";
+      }
+      else if(cell === "E"){
+        mctx.fillStyle = "#00ff00";
+      }
+      else if(cell === "L"){
+        mctx.fillStyle = "#8888ff";
+      }
+      else{
+        return;
+      }
+
+      mctx.fillRect(
+        x*cw,
+        y*ch,
+        cw,
+        ch
+      );
+
+    });
+
+  });
+
+
+  /* 敵 */
+
+  const ex =
+    enemy.x/TILE*cw;
+
+  const ey =
+    enemy.y/TILE*ch;
+
+  mctx.fillStyle = "red";
+
+  mctx.beginPath();
+
+  mctx.arc(
+    ex,ey,
+    5,
+    0,Math.PI*2
+  );
+
+  mctx.fill();
+
+
+  /* プレイヤー */
+
+  const px =
+    player.x/TILE*cw;
+
+  const py =
+    player.y/TILE*ch;
+
+  mctx.fillStyle = "cyan";
+
+  mctx.beginPath();
+
+  mctx.arc(
+    px,py,
+    5,
+    0,Math.PI*2
+  );
+
+  mctx.fill();
+
+
+  /* プレイヤーの向き */
+
+  mctx.strokeStyle = "cyan";
+  mctx.lineWidth = 2;
+
+  mctx.beginPath();
+
+  mctx.moveTo(px,py);
+
+  mctx.lineTo(
+    px+Math.cos(player.angle)*15,
+    py+Math.sin(player.angle)*15
+  );
+
+  mctx.stroke();
+}
+
+
+/* =========================
+   ロッカー案内
+========================= */
+
+function lockerMessage(){
+
+  if(hidden) return;
+
+  if(lockerDistance() < 80){
+
+    info.textContent =
+      "E：ロッカーに隠れる";
+  }
+}
+
+
+/* =========================
+   GAME OVER
+========================= */
+
+function gameOver(){
+
+  playing = false;
+
+  document.exitPointerLock();
+
+  menu.style.display = "flex";
+
+  menu.innerHTML = `
+    <h1>GAME OVER</h1>
+    <p>捕まった……</p>
+    <button onclick="retryGame()">RETRY</button>
+  `;
+}
+
+
+/* =========================
+   脱出成功
+========================= */
+
+function finishGame(){
+
+  playing = false;
+
+  document.exitPointerLock();
+
+  menu.style.display = "flex";
+
+  menu.innerHTML = `
+    <h1>ESCAPE</h1>
+    <p>脱出成功</p>
+    <button onclick="retryGame()">RETRY</button>
+  `;
+}
+
+
+/* =========================
+   リトライ
+========================= */
+
+function retryGame(){
+
+  menu.innerHTML = `
+    <h1>DEATH MAZE</h1>
+
+    <p>
+      マウス：視点操作<br>
+      WASD：移動<br>
+      E：ロッカーに隠れる / 出る
+
+      <br><br>
+
+      奴から逃げて出口へ辿り着け。
+    </p>
+
+    <button id="retryBtn">START</button>
+  `;
+
+  document.getElementById("retryBtn").onclick =
+    startGame;
+
+}
+
+
+/* =========================
+   ゲームループ
+========================= */
+
+function loop(){
+
+  if(playing){
+
+    movePlayer();
+
+    /*
+      隠れていても実行される
+    */
+    moveEnemy();
+
+    /*
+      隠れているときは
+      3D画面を描画しない
+    */
+    if(!hidden){
+
+      drawWorld();
+      drawEnemy();
+      lockerMessage();
+
+    }
+
+    /*
+      ミニマップは
+      隠れていても描画する
+    */
+    drawMinimap();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+loop();
+
+
+/* =========================
+   画面サイズ
+========================= */
+
+onresize = ()=>{
+
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+
+};
+
+</script>
+
+</body>
+</html>
+```
